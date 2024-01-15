@@ -7,6 +7,9 @@ import (
   "path"
   "regexp"
   "strings"
+
+  "github.com/adrg/frontmatter"
+  "gopkg.in/yaml.v2"
 )
 
 var help = flag.Bool("help", false, "Show help")
@@ -16,22 +19,68 @@ var clearHugoContentDir = flag.Bool("do-not-clear", true, "Clear Hugo content di
 
 var wikiLinkRegex = regexp.MustCompile(`\[\[(.*?)\]\]`)
 
-func convertObsidianMarkdownToHugoMarkdown(contents []byte) []byte {
-  contents = wikiLinkRegex.ReplaceAll(contents, []byte(`[$1]($1)`))
+type FrontMatter struct {
+  Title string `yaml:"title"`
+  Date string `yaml:"date"`
+  Draft bool `yaml:"draft"`
+  Tags []string `yaml:"tags"`
+  Categories []string `yaml:"categories"`
+  Slug string `yaml:"slug"`
+}
+
+type ContentProcessor = func(string, []byte) []byte
+type Config struct {
+  VaultDir string
+  OutputDir string
+  ClearOutputDir bool
+  ContentProcessors []ContentProcessor
+}
+
+func convertObsidianYamlToHugoYaml(fileName string, contents []byte) []byte {
+  var frontMatter FrontMatter
+
+  stringReader := strings.NewReader(string(contents))
+  rest, _ := frontmatter.Parse(stringReader, &frontMatter)
+
+  if frontMatter.Title == "" {
+    frontMatter.Title = strings.ReplaceAll(fileName, "#", "")
+  }
+
+  if frontMatter.Slug == "" {
+    frontMatter.Slug = strings.ReplaceAll(fileName, " ", "-")
+  }
+
+  marshalled, _ := yaml.Marshal(frontMatter)
+  return []byte(fmt.Sprintf("---\n%s---\n%s", marshalled, string(rest)))
+}
+
+func convertObsidianMarkdownToHugoMarkdown(fileName string, contents []byte) []byte {
+  contents = wikiLinkRegex.ReplaceAllFunc(contents, func(match []byte) []byte {
+    link := string(match[2:len(match)-2])
+
+    if strings.Contains(link, "#") {
+      link = link[0:strings.Index(link, "#")]
+      heading := link[strings.Index(link, "#")+1:]
+      heading = strings.ReplaceAll(heading, " ", "-")
+      heading = strings.ToLower(heading)
+      return []byte(fmt.Sprintf("[%s]({{< ref \"%s#%s\" >}})", link, link, heading))
+    }
+
+    return []byte(fmt.Sprintf("[%s]({{< ref \"%s\" >}})", link, link))
+  })
+
   return contents
 }
 
-// clear hugo content directory
-// copy obsidian vault to hugo content directory
-// convert obsidian markdown to hugo markdown
-// convert obsidian yaml to hugo yaml
-// convert obsidian images to hugo images
-func copyObsidianToHugo(vaultDir string, contentDir string) error {
+/// Recursively copies files from the `fromDirPath` directory to the
+/// `toDirPath` directory.
+func copyObsidianToHugo(fromDirPath string, toDirPath string) ([]string, error) {
   var err error
+  copiedPaths := []string{}
 
-  files, err := os.ReadDir(vaultDir)
+  files, err := os.ReadDir(fromDirPath)
   if err != nil {
-    return err
+    return copiedPaths, err
   }
 
   for _, file := range files {
@@ -40,46 +89,53 @@ func copyObsidianToHugo(vaultDir string, contentDir string) error {
       continue
     }
 
-    vaultFullPath := path.Join(vaultDir, name)
-    outputFullPath := path.Join(contentDir, name)
+    fromFullPath := path.Join(fromDirPath, name)
+    outputFullPath := path.Join(toDirPath, name)
 
     if file.IsDir() {
       err = os.Mkdir(outputFullPath, 0755)
-      if err != nil && !os.IsExist(err) {
-        return err
+      if err != nil && os.IsNotExist(err) {
+        return copiedPaths, err
       }
 
-      err = copyObsidianToHugo(vaultFullPath, outputFullPath)
+      nestedCopiedPaths, err := copyObsidianToHugo(fromFullPath, outputFullPath)
       if err != nil {
-        return err
+        return copiedPaths, err
       }
+
+      copiedPaths = append(copiedPaths, nestedCopiedPaths...)
     } else {
-      contents, err := os.ReadFile(vaultFullPath)
-      if strings.HasSuffix(name, ".md") {
-        contents = convertObsidianMarkdownToHugoMarkdown(contents)
-        if err != nil {
-          return err
-        }
+      contents, err := os.ReadFile(fromFullPath)
+      if err != nil {
+        return copiedPaths, err
       }
 
       err = os.WriteFile(outputFullPath, contents, 0644)
+      copiedPaths = append(copiedPaths, outputFullPath)
       if err != nil {
-        return err
+        return copiedPaths, err
       }
     }
   }
 
-  return nil
+  return copiedPaths, nil
 }
 
-func ClearHugoContentDir(outputDir string) error {
-  files, err := os.ReadDir(outputDir)
-  if err != nil {
+func clearDir(dir string) error {
+  var err error
+
+  files, err := os.ReadDir(dir)
+  if err != nil && os.IsNotExist(err) {
+    err = os.Mkdir(dir, 0755)
+    if err != nil {
+      return err
+    }
+  } else if err != nil {
     return err
   }
 
   for _, file := range files {
-    filePath := path.Join(outputDir, file.Name())
+    filePath := path.Join(dir, file.Name())
 
     if file.IsDir() {
       err := os.RemoveAll(filePath)
@@ -97,19 +153,38 @@ func ClearHugoContentDir(outputDir string) error {
   return nil
 }
 
-func ConvertObsidianToHugo(vaultDir string, outputDir string, clearHugoContentDir bool) error {
+func ConvertObsidianToHugo(config Config) error {
   var err error
 
-  if clearHugoContentDir {
-    err = ClearHugoContentDir(outputDir)
+  if config.ClearOutputDir {
+    err = clearDir(config.OutputDir)
     if err != nil {
       return err
     }
   }
 
-  err = copyObsidianToHugo(vaultDir, outputDir)
+  copiedPaths, err := copyObsidianToHugo(config.VaultDir, config.OutputDir)
   if err != nil {
     return err
+  }
+
+  for _, path := range copiedPaths {
+    if !strings.HasSuffix(path, ".md") {
+      continue
+    }
+
+    contents, err := os.ReadFile(path)
+    if err != nil {
+      return err
+    }
+
+    fileName := path[len(config.OutputDir)+1:]
+    fileName = strings.ReplaceAll(fileName, ".md", "")
+    for _, processor := range config.ContentProcessors {
+      contents = processor(fileName, contents)
+    }
+
+    os.WriteFile(path, contents, 0644)
   }
 
   return nil
@@ -133,7 +208,18 @@ func main() {
     os.Exit(1)
   }
 
-  err := ConvertObsidianToHugo(*vaultDir, *outputDir, *clearHugoContentDir)
+  config := Config{
+    VaultDir: *vaultDir,
+    OutputDir: *outputDir,
+    ClearOutputDir: *clearHugoContentDir,
+    ContentProcessors: []ContentProcessor{
+      convertObsidianYamlToHugoYaml,
+      convertObsidianMarkdownToHugoMarkdown,
+    },
+  }
+
+  err := ConvertObsidianToHugo(config)
+
   if err != nil {
     fmt.Println(err)
     os.Exit(1)
