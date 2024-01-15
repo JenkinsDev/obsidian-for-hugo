@@ -38,7 +38,7 @@ type Config struct {
   ContentProcessors []ContentProcessor
 }
 
-func convertObsidianYamlToHugoYaml(fileName string, contents []byte) []byte {
+func convertFrontMatter(fileName string, contents []byte) []byte {
   var frontMatter FrontMatter
 
   stringReader := strings.NewReader(string(contents))
@@ -66,7 +66,7 @@ func convertObsidianYamlToHugoYaml(fileName string, contents []byte) []byte {
   return []byte(fmt.Sprintf("---\n%s---\n%s", marshalled, string(rest)))
 }
 
-func convertObsidianMarkdownToHugoMarkdown(fileName string, contents []byte) []byte {
+func convertContent(fileName string, contents []byte) []byte {
   contents = wikiLinkRegex.ReplaceAllFunc(contents, func(match []byte) []byte {
     link := string(match[2:len(match)-2])
 
@@ -86,7 +86,7 @@ func convertObsidianMarkdownToHugoMarkdown(fileName string, contents []byte) []b
 
 /// Recursively copies files from the `fromDirPath` directory to the
 /// `toDirPath` directory.
-func copyObsidianToHugo(fromDirPath string, toDirPath string) ([]string, error) {
+func copyAllFilesRecursively(fromDirPath string, toDirPath string) ([]string, error) {
   var err error
   copiedPaths := []string{}
 
@@ -110,7 +110,7 @@ func copyObsidianToHugo(fromDirPath string, toDirPath string) ([]string, error) 
         return copiedPaths, err
       }
 
-      nestedCopiedPaths, err := copyObsidianToHugo(fromFullPath, outputFullPath)
+      nestedCopiedPaths, err := copyAllFilesRecursively(fromFullPath, outputFullPath)
       if err != nil {
         return copiedPaths, err
       }
@@ -175,12 +175,12 @@ func ConvertObsidianToHugo(config Config) error {
     }
   }
 
-  copiedPaths, err := copyObsidianToHugo(config.VaultDir, config.OutputDir)
+  paths, err := copyAllFilesRecursively(config.VaultDir, config.OutputDir)
   if err != nil {
     return err
   }
 
-  for _, path := range copiedPaths {
+  for _, path := range paths {
     if !strings.HasSuffix(path, ".md") {
       continue
     }
@@ -226,8 +226,8 @@ func main() {
     OutputDir: *outputDir,
     ClearOutputDir: *clearHugoContentDir,
     ContentProcessors: []ContentProcessor{
-      convertObsidianYamlToHugoYaml,
-      convertObsidianMarkdownToHugoMarkdown,
+      convertFrontMatter,
+      convertContent,
     },
   }
 
