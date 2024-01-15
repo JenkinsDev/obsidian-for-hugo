@@ -7,17 +7,19 @@ import (
   "path"
   "regexp"
   "strings"
+  "time"
 
   "github.com/adrg/frontmatter"
   "gopkg.in/yaml.v2"
 )
 
 var help = flag.Bool("help", false, "Show help")
-var vaultDir = flag.String("vault", "", "Path to Obsidian vault")
-var outputDir = flag.String("content", "", "Path to Hugo content output directory (does not have to be content root)")
-var clearHugoContentDir = flag.Bool("do-not-clear", true, "Clear Hugo content directory before converting")
+var vaultDir = flag.String("vault-path", "", "Path to Obsidian vault")
+var outputDir = flag.String("content-path", "", "Path to Hugo content output directory (does not have to be content root)")
+var clearHugoContentDir = flag.Bool("clear-content-dir", true, "Clear Hugo content directory before converting")
 
 var wikiLinkRegex = regexp.MustCompile(`\[\[(.*?)\]\]`)
+var slugifyRegex = regexp.MustCompile(`[^a-zA-Z0-9\- ]`)
 
 type FrontMatter struct {
   Title string `yaml:"title"`
@@ -47,7 +49,17 @@ func convertObsidianYamlToHugoYaml(fileName string, contents []byte) []byte {
   }
 
   if frontMatter.Slug == "" {
-    frontMatter.Slug = strings.ReplaceAll(fileName, " ", "-")
+    slugifiedTitle := slugifyRegex.ReplaceAllString(frontMatter.Title, "-")
+    frontMatter.Slug = strings.ToLower(slugifiedTitle)
+  }
+
+  if frontMatter.Date == "" {
+    fileInfo, err := os.Stat(fileName)
+    if err != nil {
+      frontMatter.Date = time.Now().Format(time.RFC3339)
+    } else {
+      frontMatter.Date = fileInfo.ModTime().Format(time.RFC3339)
+    }
   }
 
   marshalled, _ := yaml.Marshal(frontMatter)
@@ -178,7 +190,8 @@ func ConvertObsidianToHugo(config Config) error {
       return err
     }
 
-    fileName := path[len(config.OutputDir)+1:]
+    filePathParts := strings.Split(path, "/")
+    fileName := filePathParts[len(filePathParts)-1]
     fileName = strings.ReplaceAll(fileName, ".md", "")
     for _, processor := range config.ContentProcessors {
       contents = processor(fileName, contents)

@@ -1,4 +1,4 @@
-module github.com/jenkinsdev/obsidian-for-hugo.git
+module github.com/jenkinsdev/obsidian-for-hugo
 
 go 1.21.4
 
