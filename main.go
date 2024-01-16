@@ -16,10 +16,9 @@ import (
 var help = flag.Bool("help", false, "Show help")
 var vaultDir = flag.String("vault-path", "", "Path to Obsidian vault")
 var outputDir = flag.String("content-path", "", "Path to Hugo content output directory (does not have to be content root)")
-var clearHugoContentDir = flag.Bool("clear-content-dir", true, "Clear Hugo content directory before converting")
 
 var wikiLinkRegex = regexp.MustCompile(`\[\[(.*?)\]\]`)
-var slugifyRegex = regexp.MustCompile(`[^a-zA-Z0-9\- ]`)
+var slugifyRegex = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 type FrontMatter struct {
   Title string `yaml:"title"`
@@ -34,7 +33,6 @@ type ContentProcessor = func(string, []byte) []byte
 type Config struct {
   VaultDir string
   OutputDir string
-  ClearOutputDir bool
   ContentProcessors []ContentProcessor
 }
 
@@ -84,15 +82,31 @@ func convertContent(fileName string, contents []byte) []byte {
   return contents
 }
 
-/// Recursively copies files from the `fromDirPath` directory to the
-/// `toDirPath` directory.
-func copyAllFilesRecursively(fromDirPath string, toDirPath string) ([]string, error) {
+func convertFile(fromPath string, toPath string, contentProcessors []ContentProcessor) {
+  contents, err := os.ReadFile(fromPath)
+  if err != nil {
+    return
+  }
+
+  fileName := path.Base(fromPath)
+  fileName = strings.ReplaceAll(fileName, ".md", "")
+
+  for _, processor := range contentProcessors {
+    contents = processor(fileName, contents)
+  }
+
+  err = os.WriteFile(toPath, contents, 0644)
+  if err != nil {
+    return
+  }
+}
+
+func convertAllRecursively(fromDirPath string, toDirPath string, contentProcessors []ContentProcessor) error {
   var err error
-  copiedPaths := []string{}
 
   files, err := os.ReadDir(fromDirPath)
   if err != nil {
-    return copiedPaths, err
+    return err
   }
 
   for _, file := range files {
@@ -102,63 +116,20 @@ func copyAllFilesRecursively(fromDirPath string, toDirPath string) ([]string, er
     }
 
     fromFullPath := path.Join(fromDirPath, name)
-    outputFullPath := path.Join(toDirPath, name)
+    toFullPath := path.Join(toDirPath, name)
 
     if file.IsDir() {
-      err = os.Mkdir(outputFullPath, 0755)
+      err = os.Mkdir(toFullPath, 0755)
       if err != nil && os.IsNotExist(err) {
-        return copiedPaths, err
+        return err
       }
 
-      nestedCopiedPaths, err := copyAllFilesRecursively(fromFullPath, outputFullPath)
-      if err != nil {
-        return copiedPaths, err
-      }
-
-      copiedPaths = append(copiedPaths, nestedCopiedPaths...)
-    } else {
-      contents, err := os.ReadFile(fromFullPath)
-      if err != nil {
-        return copiedPaths, err
-      }
-
-      err = os.WriteFile(outputFullPath, contents, 0644)
-      copiedPaths = append(copiedPaths, outputFullPath)
-      if err != nil {
-        return copiedPaths, err
-      }
-    }
-  }
-
-  return copiedPaths, nil
-}
-
-func clearDir(dir string) error {
-  var err error
-
-  files, err := os.ReadDir(dir)
-  if err != nil && os.IsNotExist(err) {
-    err = os.Mkdir(dir, 0755)
-    if err != nil {
-      return err
-    }
-  } else if err != nil {
-    return err
-  }
-
-  for _, file := range files {
-    filePath := path.Join(dir, file.Name())
-
-    if file.IsDir() {
-      err := os.RemoveAll(filePath)
+      err := convertAllRecursively(fromFullPath, toFullPath, contentProcessors)
       if err != nil {
         return err
       }
     } else {
-      err := os.Remove(filePath)
-      if err != nil {
-        return err
-      }
+      go convertFile(fromFullPath, toFullPath, contentProcessors)
     }
   }
 
@@ -166,38 +137,9 @@ func clearDir(dir string) error {
 }
 
 func ConvertObsidianToHugo(config Config) error {
-  var err error
-
-  if config.ClearOutputDir {
-    err = clearDir(config.OutputDir)
-    if err != nil {
-      return err
-    }
-  }
-
-  paths, err := copyAllFilesRecursively(config.VaultDir, config.OutputDir)
+  err := convertAllRecursively(config.VaultDir, config.OutputDir, config.ContentProcessors)
   if err != nil {
     return err
-  }
-
-  for _, path := range paths {
-    if !strings.HasSuffix(path, ".md") {
-      continue
-    }
-
-    contents, err := os.ReadFile(path)
-    if err != nil {
-      return err
-    }
-
-    filePathParts := strings.Split(path, "/")
-    fileName := filePathParts[len(filePathParts)-1]
-    fileName = strings.ReplaceAll(fileName, ".md", "")
-    for _, processor := range config.ContentProcessors {
-      contents = processor(fileName, contents)
-    }
-
-    os.WriteFile(path, contents, 0644)
   }
 
   return nil
@@ -224,7 +166,6 @@ func main() {
   config := Config{
     VaultDir: *vaultDir,
     OutputDir: *outputDir,
-    ClearOutputDir: *clearHugoContentDir,
     ContentProcessors: []ContentProcessor{
       convertFrontMatter,
       convertContent,
