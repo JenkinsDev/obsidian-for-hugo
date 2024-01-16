@@ -7,6 +7,7 @@ import (
   "path"
   "regexp"
   "strings"
+  "sync"
   "time"
 
   "github.com/adrg/frontmatter"
@@ -16,6 +17,7 @@ import (
 var help = flag.Bool("help", false, "Show help")
 var vaultDir = flag.String("vault-path", "", "Path to Obsidian vault")
 var outputDir = flag.String("content-path", "", "Path to Hugo content output directory (does not have to be content root)")
+var wg sync.WaitGroup
 
 var wikiLinkRegex = regexp.MustCompile(`\[\[(.*?)\]\]`)
 var slugifyRegex = regexp.MustCompile(`[^a-zA-Z0-9]`)
@@ -83,6 +85,8 @@ func convertContent(fileName string, contents []byte) []byte {
 }
 
 func convertFile(fromPath string, toPath string, contentProcessors []ContentProcessor) {
+  defer wg.Done()
+
   contents, err := os.ReadFile(fromPath)
   if err != nil {
     return
@@ -129,6 +133,7 @@ func convertAllRecursively(fromDirPath string, toDirPath string, contentProcesso
         return err
       }
     } else {
+      wg.Add(1)
       go convertFile(fromFullPath, toFullPath, contentProcessors)
     }
   }
@@ -178,6 +183,8 @@ func main() {
     fmt.Println(err)
     os.Exit(1)
   }
+
+  wg.Wait()
 
   os.Exit(0)
 }
