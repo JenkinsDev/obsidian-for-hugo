@@ -71,10 +71,11 @@ func convertContent(fileName string, contents []byte) []byte {
     link := string(match[2:len(match)-2])
 
     if strings.Contains(link, "#") {
-      link = link[0:strings.Index(link, "#")]
       heading := link[strings.Index(link, "#")+1:]
       heading = strings.ReplaceAll(heading, " ", "-")
       heading = strings.ToLower(heading)
+
+      link = link[0:strings.Index(link, "#")]
       return []byte(fmt.Sprintf("[%s]({{< ref \"%s#%s\" >}})", link, link, heading))
     }
 
