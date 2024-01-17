@@ -74,6 +74,7 @@ func attemptGitDate(config Config, file File, frontMatter *FrontMatter) {
   command := exec.Command("git", "--no-pager", "log", "-1", "--format=%ad", "--date=unix",  "--", file.Path)
   command.Dir = string(gitRoot)
 
+  // git log will only output to STDOUT if it's a terminal, so we need to create a PTY to capture the output
   ptmx, err := pty.Start(command)
   if err != nil {
     return
