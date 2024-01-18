@@ -77,6 +77,7 @@ func attemptGitDate(config Config, file File, frontMatter *FrontMatter) {
   // git log will only output to STDOUT if it's a terminal, so we need to create a PTY to capture the output
   ptmx, err := pty.Start(command)
   if err != nil {
+    fmt.Println(err)
     return
   }
 
@@ -84,10 +85,12 @@ func attemptGitDate(config Config, file File, frontMatter *FrontMatter) {
   output, err := ioutil.ReadAll(ptmx)
 
   if err != nil {
-    timestamp := strings.TrimSpace(string(output))
-    i, _ := strconv.ParseInt(timestamp, 10, 64)
-    frontMatter.Date = time.Unix(i, 0).Format(time.RFC3339)
+    return
   }
+
+  timestamp := strings.TrimSpace(string(output))
+  i, _ := strconv.ParseInt(timestamp, 10, 64)
+  frontMatter.Date = time.Unix(i, 0).Format(time.RFC3339)
 }
 
 func attemptFileDate(config Config, file File, frontMatter *FrontMatter) {
